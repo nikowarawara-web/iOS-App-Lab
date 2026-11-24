@@ -1,0 +1,30 @@
+name: Build iPhone IPA
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ipa
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build unsigned iPhone IPA
+        shell: bash
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          bash MiraiNoHitohira/scripts/build-ipa.sh
+      - uses: actions/upload-artifact@v6
+        with:
+          name: MiraiNoHitohira
+          path: MiraiNoHitohira/dist/MiraiNoHitohira.ipa
+          if-no-files-found: error
+          retention-days: 3
