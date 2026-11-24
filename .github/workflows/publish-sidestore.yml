@@ -1,0 +1,120 @@
+name: Publish SideStore update
+on:
+  workflow_run:
+    workflows: [Build iPhone IPA]
+    branches: [main]
+    types: [completed]
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-sidestore.yml]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency: mirai-sidestore-publish
+
+jobs:
+  publish:
+    if: >-
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[publish v1.1]')) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: MiraiNoHitohira
+          path: incoming
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event_name == 'push' && '45394187399' || github.event.workflow_run.id }}
+      - name: Publish IPA and update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          feed_path="MiraiNoHitohira/source.json"
+          tag="mirai-updates"
+          gh api "repos/$repo/contents/$feed_path" > previous.json 2>/dev/null || true
+          python3 - <<'PYTHON'
+          import base64
+          import datetime
+          import json
+          import os
+          import pathlib
+          import plistlib
+          import re
+          import zipfile
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          ipa = pathlib.Path("incoming/MiraiNoHitohira.ipa")
+          with zipfile.ZipFile(ipa) as archive:
+              info = plistlib.loads(archive.read("Payload/MiraiNoHitohira.app/Info.plist"))
+          version = info["CFBundleShortVersionString"]
+          build = info["CFBundleVersion"]
+          for number in (version, build, info["MinimumOSVersion"]):
+              if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", number):
+                  raise SystemExit("Invalid version metadata")
+          bundle = "com.mirainohitohira.journal"
+          if info["CFBundleIdentifier"] != bundle or info["CFBundleDisplayName"] != "MiraiNoHitohira":
+              raise SystemExit("Unexpected signing identity")
+          base = f"https://github.com/{repo}/releases/download/mirai-updates"
+          raw = f"https://raw.githubusercontent.com/{repo}/main"
+          date = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+          filename = f"MiraiNoHitohira-v{version}-{build}.ipa"
+          url = f"{base}/{filename}"
+          current = {
+              "version": version, "date": date, "downloadURL": url, "size": ipa.stat().st_size,
+              "minOSVersion": info["MinimumOSVersion"], "buildVersion": build,
+          }
+          previous = pathlib.Path("previous.json")
+          if previous.stat().st_size:
+              response = json.loads(previous.read_text())
+              source = json.loads(base64.b64decode(response["content"]))
+              app = source["apps"][0]
+              if app["bundleIdentifier"] != bundle:
+                  raise SystemExit("Unexpected existing feed")
+              newest = app["versions"][0]
+              def key(entry):
+                  return tuple(tuple(map(int, entry[field].split("."))) for field in ("version", "buildVersion"))
+              if key(current) <= key(newest):
+                  print("This build is already published or has been superseded.")
+                  raise SystemExit(0)
+              app["versions"].insert(0, current)
+              pathlib.Path("previous-sha").write_text(response["sha"])
+          else:
+              app = {
+                  "name": "MiraiNoHitohira", "bundleIdentifier": bundle, "developerName": "MiraiNoHitohira",
+                  "localizedDescription": "毎朝、未来の場面を読み、書き写して絵葉書に残すアプリ。",
+                  "iconURL": f"{raw}/MiraiNoHitohira/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+                  "tintColor": "8A4840", "versions": [current],
+              }
+              source = {
+                  "name": "未来の一片", "identifier": "com.mirainohitohira.source",
+                  "sourceURL": f"{raw}/MiraiNoHitohira/source.json", "apps": [app],
+              }
+          app.update(version=version, versionDate=date, downloadURL=url, size=ipa.stat().st_size)
+          pathlib.Path("source.json").write_text(json.dumps(source, ensure_ascii=False, indent=2) + "\n")
+          ipa.rename(filename)
+          pathlib.Path("publish-ipa").write_text(filename)
+          PYTHON
+          if [[ ! -f publish-ipa ]]; then exit 0; fi
+          filename="$(cat publish-ipa)"
+          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$repo" --latest=false --title "未来の一片 · SideStore" --notes "SideStore用のIPA配布"
+          fi
+          if ! gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' | grep -Fxq "$filename"; then
+            gh release upload "$tag" "$filename" --repo "$repo"
+          else
+            mkdir -p verification
+            gh release download "$tag" --repo "$repo" --pattern "$filename" --dir verification
+            cmp "$filename" "verification/$filename"
+          fi
+          args=(--method PUT "repos/$repo/contents/$feed_path" -f branch=main
+                -f message="Publish SideStore update" -f "content=$(base64 -w0 source.json)")
+          if [[ -f previous-sha ]]; then args+=(-f "sha=$(cat previous-sha)"); fi
+          gh api "${args[@]}" --jq .content.html_url
