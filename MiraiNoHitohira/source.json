@@ -1,0 +1,29 @@
+{
+  "name": "未来の一片",
+  "identifier": "com.mirainohitohira.source",
+  "sourceURL": "https://raw.githubusercontent.com/nikowarawara-web/iOS-App-Lab/main/MiraiNoHitohira/source.json",
+  "apps": [
+    {
+      "name": "MiraiNoHitohira",
+      "bundleIdentifier": "com.mirainohitohira.journal",
+      "developerName": "MiraiNoHitohira",
+      "localizedDescription": "毎朝、未来の場面を読み、書き写して絵葉書に残すアプリ。",
+      "iconURL": "https://raw.githubusercontent.com/nikowarawara-web/iOS-App-Lab/main/MiraiNoHitohira/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tintColor": "8A4840",
+      "versions": [
+        {
+          "version": "1.1",
+          "date": "2026-11-24T12:38:19Z",
+          "downloadURL": "https://github.com/nikowarawara-web/iOS-App-Lab/releases/download/mirai-updates/MiraiNoHitohira-v1.1-2.ipa",
+          "size": 12181799,
+          "minOSVersion": "26.0",
+          "localizedDescription": "バージョン 1.1"
+        }
+      ],
+      "version": "1.1",
+      "versionDate": "2026-11-24T12:38:19Z",
+      "downloadURL": "https://github.com/nikowarawara-web/iOS-App-Lab/releases/download/mirai-updates/MiraiNoHitohira-v1.1-2.ipa",
+      "size": 12181799
+    }
+  ]
+}
