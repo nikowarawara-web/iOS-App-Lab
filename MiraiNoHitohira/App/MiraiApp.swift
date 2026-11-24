@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -5,17 +6,28 @@ import UIKit
 struct MiraiApp: App {
     @Environment(\.scenePhase) private var phase
     @State private var model = MorningModel.shared
+    @State private var soundscape = AmbientSoundscape()
 
     var body: some Scene {
         WindowGroup {
-            JournalView(model: model)
-                .preferredColorScheme(.light)
-                .task { await model.observeAlarms() }
-                .onOpenURL { model.openURL($0) }
-                .onChange(of: phase) { _, value in
-                    if value == .active { model.refreshDay() }
-                    if value == .background { model.enteredBackground() }
-                }
+            TimelineView(.everyMinute) { clock in
+                let light = JournalLight(at: clock.date)
+                let audibleLight: JournalLight? = model.ambientSoundEnabled && phase == .active ? light : nil
+                JournalView(model: model, light: light)
+                    .onChange(of: audibleLight, initial: true) { _, value in soundscape.update(value) }
+                    .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+                        guard let value = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                              let type = AVAudioSession.InterruptionType(rawValue: value) else { return }
+                        soundscape.update(type == .ended ? audibleLight : nil)
+                    }
+            }
+            .preferredColorScheme(.light)
+            .task { await model.observeAlarms() }
+            .onOpenURL { model.openURL($0) }
+            .onChange(of: phase) { _, value in
+                if value == .active { model.refreshDay() }
+                if value == .background { model.enteredBackground() }
+            }
         }
     }
 }
@@ -25,10 +37,6 @@ private let earth = Color(red: 0.42, green: 0.32, blue: 0.30)
 private let clay = Color(red: 0.54, green: 0.28, blue: 0.24)
 private let parchment = Color(red: 0.95, green: 0.90, blue: 0.84)
 private let paper = Color(red: 0.99, green: 0.96, blue: 0.90)
-private let night = Color(red: 0.15, green: 0.15, blue: 0.23)
-private let dusk = Color(red: 0.37, green: 0.25, blue: 0.32)
-private let moonlight = Color(red: 1, green: 0.94, blue: 0.85)
-private let dust = Color(red: 0.90, green: 0.79, blue: 0.77)
 
 private func handwritten(_ style: Font.TextStyle, bold: Bool = false) -> Font {
     let face = bold ? "KleeOne-SemiBold" : "KleeOne-Regular"
@@ -44,8 +52,12 @@ private func handwritten(_ style: Font.TextStyle, bold: Bool = false) -> Font {
 
 struct JournalView: View {
     @Bindable var model: MorningModel
+    let light: JournalLight
     @State private var editingAlarm: WakeAlarm?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var skyInk: Color { light.usesDarkText ? ink : Color(red: 1, green: 0.94, blue: 0.85) }
+    private var mutedSkyInk: Color { light.usesDarkText ? earth : Color(red: 0.97, green: 0.89, blue: 0.86) }
 
     var body: some View {
         GeometryReader { geometry in
@@ -71,14 +83,19 @@ struct JournalView: View {
         .foregroundStyle(ink)
         .background {
             ZStack {
-                LinearGradient(colors: [night, dusk, Color(red: 0.52, green: 0.34, blue: 0.33)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                RadialGradient(colors: [Color(red: 0.95, green: 0.68, blue: 0.53).opacity(0.22), .clear],
-                               center: .bottomTrailing, startRadius: 8, endRadius: 440)
+                light.header
+                ForEach(JournalLight.allCases, id: \.self) { sky in
+                    ZStack {
+                        LinearGradient(colors: sky.sky, startPoint: .topLeading, endPoint: .bottomTrailing)
+                        RadialGradient(colors: [sky.glow, .clear], center: .bottomTrailing, startRadius: 8, endRadius: 480)
+                    }
+                    .opacity(sky == light ? 1 : 0)
+                }
             }
             .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.stage)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 1.1), value: light)
     }
 
     private var header: some View {
@@ -86,7 +103,7 @@ struct JournalView: View {
             HStack(spacing: 8) {
                 Label("未来の一片", systemImage: "sun.horizon")
                     .font(handwritten(.subheadline, bold: true))
-                    .foregroundStyle(moonlight)
+                    .foregroundStyle(skyInk)
                 Spacer(minLength: 6)
                 tabs
             }
@@ -96,8 +113,8 @@ struct JournalView: View {
         .padding(.vertical, 6)
         .frame(maxWidth: 606)
         .frame(maxWidth: .infinity)
-        .background(night.opacity(0.94))
-        .overlay(alignment: .bottom) { Rectangle().fill(moonlight.opacity(0.14)).frame(height: 1) }
+        .background(light.header)
+        .overlay(alignment: .bottom) { Rectangle().fill(skyInk.opacity(0.14)).frame(height: 1) }
     }
 
     private var tabs: some View {
@@ -115,8 +132,8 @@ struct JournalView: View {
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 8)
                 .frame(minHeight: 44)
-                .background(model.page == page ? moonlight.opacity(0.15) : .clear, in: Capsule())
-                .foregroundStyle(model.page == page ? moonlight : dust)
+                .background(model.page == page ? skyInk.opacity(0.15) : .clear, in: Capsule())
+                .foregroundStyle(model.page == page ? skyInk : mutedSkyInk)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(model.page == page ? .isSelected : [])
@@ -128,7 +145,7 @@ struct JournalView: View {
                 Text(dateLabel(model.date))
                     .font(.caption.weight(.semibold))
                     .tracking(1.2)
-                    .foregroundStyle(dust)
+                    .foregroundStyle(mutedSkyInk)
                 title(model.stage == .waking ? "おはようございます" : "今日の一片")
             }
             VStack(alignment: .leading, spacing: 0) {
@@ -244,7 +261,7 @@ struct JournalView: View {
             title("未来の絵葉書")
             if model.postcards.isEmpty {
                 Text("書き写し終えた場面が、ここに並びます。")
-                    .foregroundStyle(dust)
+                    .foregroundStyle(mutedSkyInk)
                     .padding(.vertical, 12)
             }
             LazyVStack(spacing: 22) {
@@ -280,17 +297,17 @@ struct JournalView: View {
                     Image(systemName: "plus")
                         .font(.title3.weight(.semibold))
                         .frame(width: 46, height: 46)
-                        .background(moonlight.opacity(0.14), in: Circle())
+                        .background(skyInk.opacity(0.14), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(moonlight)
+                .foregroundStyle(skyInk)
                 .accessibilityLabel("アラームを追加")
                 .disabled(model.busy)
             }
             if model.wakeAlarms.isEmpty {
                 Text("＋から起きる時刻を設定できます。")
                     .font(.subheadline)
-                    .foregroundStyle(dust)
+                    .foregroundStyle(mutedSkyInk)
             } else {
                 VStack(spacing: 0) {
                     ForEach(model.wakeAlarms) { alarm in
@@ -333,6 +350,7 @@ struct JournalView: View {
             }
             VStack(alignment: .leading, spacing: 13) {
                 Toggle("入力音と完了音", isOn: $model.soundEnabled).tint(clay)
+                Toggle("環境音", isOn: $model.ambientSoundEnabled).tint(clay)
                 Divider()
                 if model.testScheduled {
                     Button("テストを取り消す", role: .destructive) { model.cancelTest() }
@@ -352,7 +370,7 @@ struct JournalView: View {
             .background(paper, in: RoundedRectangle(cornerRadius: 18))
             Text("「今日の一片を開く」で絵と文章を表示します。入力が１分途切れるか、画面を離れると再び鳴ります。")
                 .font(.footnote)
-                .foregroundStyle(dust)
+                .foregroundStyle(mutedSkyInk)
         }
         .sheet(item: $editingAlarm) { draft in
             AlarmEditor(model: model, alarm: draft)
@@ -362,7 +380,7 @@ struct JournalView: View {
     private func title(_ label: String) -> some View {
         Text(label)
             .font(handwritten(.largeTitle, bold: true))
-            .foregroundStyle(moonlight)
+            .foregroundStyle(skyInk)
             .accessibilityAddTraits(.isHeader)
     }
 

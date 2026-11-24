@@ -10,7 +10,8 @@ xcodebuild   -project MiraiNoHitohira.xcodeproj   -scheme MiraiNoHitohira   -con
 
 app="$build_folder/DerivedData/Build/Products/Release-iphoneos/MiraiNoHitohira.app"
 test -x "$app/MiraiNoHitohira"
-for file in Info.plist scenes.json scene0.jpg scene7.jpg Key.wav Saved.wav Dawn.wav KleeOne-Regular.ttf KleeOne-SemiBold.ttf KleeOne-OFL.txt ja.lproj/InfoPlist.strings; do
+for file in Info.plist scenes.json scene0.jpg scene7.jpg Key.wav Saved.wav Dawn.wav KleeOne-Regular.ttf KleeOne-SemiBold.ttf KleeOne-OFL.txt ja.lproj/InfoPlist.strings \
+    Ambience/Leaves.m4a Ambience/Sparrow.m4a Ambience/Warbler.m4a Ambience/Tit.m4a Ambience/Dove.m4a Ambience/Credits.txt; do
   test -s "$app/$file"
 done
 

@@ -112,6 +112,9 @@ final class MorningModel {
     var message: String?
     var alarmMessage: String?
     var busy = false
+    var ambientSoundEnabled: Bool {
+        didSet { defaults.set(ambientSoundEnabled, forKey: "ambientSoundEnabled") }
+    }
     var soundEnabled: Bool {
         didSet { defaults.set(soundEnabled, forKey: "soundEnabled") }
     }
@@ -146,6 +149,7 @@ final class MorningModel {
            let data = try? JSONEncoder().encode(revisedCards) {
             defaults.set(data, forKey: "postcards")
         }
+        ambientSoundEnabled = defaults.object(forKey: "ambientSoundEnabled") as? Bool ?? true
         soundEnabled = defaults.object(forKey: "soundEnabled") as? Bool ?? true
         if let data = defaults.data(forKey: "wakeAlarms"),
            let saved = try? JSONDecoder().decode([WakeAlarm].self, from: data) {
