@@ -8,13 +8,14 @@ struct Passage: Equatable, Decodable {
 
     static func letters(_ text: String) -> [Character] {
         text.folding(options: .widthInsensitive, locale: Locale(identifier: "ja_JP"))
-            .precomposedStringWithCanonicalMapping.filter { !$0.isWhitespace && !$0.isPunctuation }
+            .precomposedStringWithCanonicalMapping.filter { !$0.isWhitespace }
     }
 }
 
 struct SceneLibrary: Decodable {
     let entries: [Passage]
     let legacyDescriptions: [String]
+    let priorTexts: [String: [String]]?
 
     static func load() -> Self {
         if let url = Bundle.main.url(forResource: "scenes", withExtension: "json"),
@@ -25,12 +26,11 @@ struct SceneLibrary: Decodable {
         }
         let artwork = "朝の光が差す窓辺"
         return Self(entries: [Passage(title: nil, text: "朝の光が、机の上のノートを照らしています。", image: 7, description: artwork)],
-                    legacyDescriptions: Array(repeating: artwork, count: 8))
+                    legacyDescriptions: Array(repeating: artwork, count: 8), priorTexts: nil)
     }
 
     func revisedPostcard(_ card: Postcard) -> Postcard {
-        let previousDeliveryText = "歩く人が立ち止まると、荷物を運ぶロボットも少し手前で待ちます。その距離なら、体をひねらず袋を取れると教えてもらいます。"
-        guard card.art == 25, card.text == previousDeliveryText,
+        guard priorTexts?[String(card.art)]?.contains(card.text) == true,
               let revised = entries.first(where: { $0.image == card.art }) else { return card }
         return Postcard(day: card.day, date: card.date, text: revised.text, art: card.art,
                         description: revised.description, title: revised.title)
@@ -65,6 +65,26 @@ struct Postcard: Codable, Identifiable {
     static func dayKey(_ date: Date) -> String {
         let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+}
+
+struct LetterDraft {
+    private(set) var text = ""
+    private(set) var committed = ""
+    private(set) var isComposing = false
+
+    mutating func edit(_ text: String, isComposing: Bool) {
+        self.text = text
+        self.isComposing = isComposing
+        if !isComposing { committed = text }
+    }
+
+    func match(_ reference: String) -> MatchState {
+        MatchState(reference: reference, typed: committed)
+    }
+
+    func canSend(_ reference: String) -> Bool {
+        !isComposing && match(reference).complete
     }
 }
 

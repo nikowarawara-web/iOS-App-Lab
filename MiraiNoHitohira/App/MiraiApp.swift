@@ -54,6 +54,7 @@ struct JournalView: View {
     @Bindable var model: MorningModel
     let light: JournalLight
     @State private var editingAlarm: WakeAlarm?
+    @State private var replayCard: Postcard?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var skyInk: Color { light.usesDarkText ? ink : Color(red: 1, green: 0.94, blue: 0.85) }
@@ -80,6 +81,11 @@ struct JournalView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .safeAreaInset(edge: .top, spacing: 0) { header }
+                .onChange(of: model.letter.canSend(model.passage.text)) { _, ready in
+                    if ready && model.page == .today && model.stage == .typing {
+                        scroll.scrollTo("sendPostcard", anchor: .bottom)
+                    }
+                }
                 .onChange(of: model.stage) { _, stage in
                     guard stage == .saved, model.page == .today,
                           SceneImage.hasMotion(model.passage.image) else { return }
@@ -105,6 +111,9 @@ struct JournalView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.stage)
         .animation(reduceMotion ? nil : .easeInOut(duration: 1.1), value: light)
+        .sheet(item: $replayCard) { card in
+            PostcardReplay(card: card, onKey: model.playKeyFeedback, onSent: model.playSendFeedback)
+        }
     }
 
     private var header: some View {
@@ -168,7 +177,7 @@ struct JournalView: View {
                             .font(handwritten(.title2, bold: true))
                             .accessibilityAddTraits(.isHeader)
                     }
-                    Text(markedPassage)
+                    Text(highlightedPassage(model.passage.text, committed: model.stage == .typing ? model.letter.committed : ""))
                         .font(handwritten(.body))
                         .lineSpacing(8)
                         .fixedSize(horizontal: false, vertical: true)
@@ -189,11 +198,12 @@ struct JournalView: View {
                     primary("書き写す", symbol: "pencil") { model.startTyping() }
                     readButton
                 case .typing:
-                    input
+                    PostcardComposer(passage: model.passage.text, letter: model.letter,
+                                     onEdit: model.input, onSend: model.sendToday)
+                        .id(model.inputSession)
+                    readButton
                 case .saved:
-                    Label("絵葉書に残しました", systemImage: "checkmark.seal.fill")
-                        .font(.headline)
-                        .foregroundStyle(clay)
+                    DeliveryReceipt()
                     Button("絵葉書を見る") { model.select(.archive) }
                         .font(.subheadline.weight(.semibold))
                         .tint(clay)
@@ -209,57 +219,6 @@ struct JournalView: View {
         }
     }
 
-    private var markedPassage: AttributedString {
-        var result = AttributedString()
-        var index = 0
-        let letters = Passage.letters(model.committed)
-        for char in model.passage.text.precomposedStringWithCanonicalMapping {
-            var part = AttributedString(String(char))
-            let expected = Passage.letters(String(char))
-            let typed = letters.dropFirst(index).prefix(expected.count)
-            if model.stage == .typing && !typed.isEmpty {
-                if typed.elementsEqual(expected.prefix(typed.count)) {
-                    part.foregroundColor = Color(red: 0.27, green: 0.37, blue: 0.23)
-                } else {
-                    part.foregroundColor = Color(red: 0.58, green: 0.15, blue: 0.13)
-                    part.backgroundColor = clay.opacity(0.12)
-                }
-            }
-            index += expected.count
-            result.append(part)
-        }
-        return result
-    }
-
-    private var input: some View {
-        let match = model.match
-        return VStack(alignment: .leading, spacing: 11) {
-            HStack {
-                Text("上の文章を書き写す").font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(match.matched) / \(match.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(earth)
-                    .accessibilityLabel("一致した文字数")
-                    .accessibilityValue("\(match.matched)文字、全\(match.count)文字")
-            }
-            ProgressView(value: Double(match.matched), total: Double(max(1, match.count)))
-                .tint(clay)
-                .accessibilityHidden(true)
-            JapaneseInput(text: model.draft, onEdit: model.input)
-                .id(model.inputSession)
-                .frame(minHeight: 95)
-                .padding(7)
-                .background(parchment, in: RoundedRectangle(cornerRadius: 13))
-                .overlay { RoundedRectangle(cornerRadius: 13).strokeBorder(clay.opacity(0.2)) }
-            Text(match.excess ? "文の終わりに余分な文字があります。" :
-                    match.incorrect ? "色が付いた文字を確認できます。" : "句読点や空白は省略できます。")
-                .font(.footnote)
-                .foregroundStyle(earth)
-            readButton
-        }
-    }
-
     private var readButton: some View {
         Button("今日は読むだけにする") { model.readOnly() }
             .font(.subheadline.weight(.medium))
@@ -271,7 +230,7 @@ struct JournalView: View {
         Group {
             title("未来の絵葉書")
             if model.postcards.isEmpty {
-                Text("書き写し終えた場面が、ここに並びます。")
+                Text("未来へ送った絵葉書が、ここに並びます。")
                     .foregroundStyle(mutedSkyInk)
                     .padding(.vertical, 12)
             }
@@ -288,6 +247,15 @@ struct JournalView: View {
                         Text(card.text)
                             .font(handwritten(.body))
                             .lineSpacing(7)
+                        Button {
+                            replayCard = card
+                        } label: {
+                            Label("もう一度書く", systemImage: "pencil")
+                        }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .tint(clay)
+                        .font(.subheadline.weight(.semibold))
                     }
                     .padding(13)
                     .background(paper, in: RoundedRectangle(cornerRadius: 15))
@@ -616,6 +584,176 @@ private struct InlineMotion: UIViewRepresentable {
                 }
             }
         }
+    }
+}
+
+private func highlightedPassage(_ passage: String, committed: String) -> AttributedString {
+    var result = AttributedString()
+    var index = 0
+    let letters = Passage.letters(committed)
+    for char in passage.precomposedStringWithCanonicalMapping {
+        var part = AttributedString(String(char))
+        let expected = Passage.letters(String(char))
+        let typed = letters.dropFirst(index).prefix(expected.count)
+        if !typed.isEmpty {
+            if typed.elementsEqual(expected.prefix(typed.count)) {
+                part.foregroundColor = Color(red: 0.27, green: 0.37, blue: 0.23)
+            } else {
+                part.foregroundColor = Color(red: 0.58, green: 0.15, blue: 0.13)
+                part.backgroundColor = clay.opacity(0.12)
+            }
+        }
+        index += expected.count
+        result.append(part)
+    }
+    return result
+}
+
+private struct PostcardComposer: View {
+    let passage: String
+    let letter: LetterDraft
+    let onEdit: (String, Bool) -> Void
+    let onSend: () -> Void
+
+    var body: some View {
+        let match = letter.match(passage)
+        let canSend = letter.canSend(passage)
+        VStack(alignment: .leading, spacing: 11) {
+            HStack {
+                Text("上の文章を書き写す").font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(match.matched) / \(match.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(earth)
+                    .accessibilityLabel("一致した文字数")
+                    .accessibilityValue("\(match.matched)文字、全\(match.count)文字")
+            }
+            ProgressView(value: Double(match.matched), total: Double(max(1, match.count)))
+                .tint(clay)
+                .accessibilityHidden(true)
+            JapaneseInput(text: letter.text, onEdit: onEdit)
+                .frame(minHeight: 95)
+                .padding(7)
+                .background(paper, in: RoundedRectangle(cornerRadius: 13))
+                .overlay { RoundedRectangle(cornerRadius: 13).strokeBorder(clay.opacity(0.19)) }
+
+            Text(hint(match, canSend: canSend))
+                .font(.footnote)
+                .foregroundStyle(earth)
+
+            Button(action: onSend) {
+                Label("未来へ送る", systemImage: "paperplane.fill")
+                    .font(handwritten(.subheadline, bold: true))
+                    .frame(maxWidth: .infinity, minHeight: 47)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(clay)
+            .disabled(!canSend)
+            .id("sendPostcard")
+        }
+    }
+
+    private func hint(_ match: MatchState, canSend: Bool) -> String {
+        if letter.isComposing { return "変換を確定すると照合できます。" }
+        if canSend { return "書き写せました。未来の自分に送れます。" }
+        if match.excess { return "文の終わりに余分な文字があります。" }
+        if match.incorrect { return "色が付いた文字と句読点を確認してください。" }
+        return "句読点とかぎ括弧まで写します。空白は省略できます。"
+    }
+}
+
+private struct DeliveryReceipt: View {
+    var body: some View {
+        Label("未来へ送りました", systemImage: "paperplane.fill")
+            .font(handwritten(.headline, bold: true))
+            .foregroundStyle(clay)
+            .transition(.opacity.combined(with: .offset(y: 7)))
+    }
+}
+
+private struct PostcardReplay: View {
+    let card: Postcard
+    let onKey: () -> Void
+    let onSent: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var letter = LetterDraft()
+    @State private var sent = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { scroll in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SceneImage(index: card.art, description: card.description, playOnCompletion: sent)
+                                .id("replayArtwork")
+                            if let title = card.title {
+                                Text(title).font(handwritten(.title2, bold: true))
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                            Text(highlightedPassage(card.text, committed: sent ? "" : letter.committed))
+                                .font(handwritten(.body))
+                                .lineSpacing(7)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityLabel(card.text)
+                        }
+                        .padding(13)
+                        .background(paper, in: RoundedRectangle(cornerRadius: 15))
+                        if sent {
+                            VStack(alignment: .leading, spacing: 13) {
+                                DeliveryReceipt()
+                                Button("絵葉書に戻る") { dismiss() }
+                                    .font(.subheadline.weight(.semibold))
+                                    .tint(clay)
+                            }
+                            .padding(14)
+                        } else {
+                            PostcardComposer(passage: card.text, letter: letter,
+                                             onEdit: updateDraft, onSend: sendAgain)
+                        }
+                    }
+                    .frame(maxWidth: 530)
+                    .padding(17)
+                    .frame(maxWidth: .infinity)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: sent)
+                .onChange(of: letter.canSend(card.text)) { _, ready in
+                    if ready && !sent { scroll.scrollTo("sendPostcard", anchor: .bottom) }
+                }
+                .onChange(of: sent) { _, sent in
+                    if sent {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                            scroll.scrollTo("replayArtwork", anchor: .top)
+                        }
+                    }
+                }
+            }
+            .background(parchment)
+            .foregroundStyle(ink)
+            .navigationTitle("もう一度書く")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }.tint(clay)
+                }
+            }
+        }
+    }
+
+    private func updateDraft(_ text: String, _ isComposing: Bool) {
+        guard !sent else { return }
+        if letter.text != text { onKey() }
+        letter.edit(text, isComposing: isComposing)
+    }
+
+    private func sendAgain() {
+        guard !sent, letter.canSend(card.text) else { return }
+        sent = true
+        onSent()
     }
 }
 

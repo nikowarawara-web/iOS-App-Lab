@@ -6,7 +6,18 @@ project_root="$PWD"
 build_folder="$(mktemp -d)"
 trap 'rm -rf "$build_folder"' EXIT
 
-xcodebuild   -project MiraiNoHitohira.xcodeproj   -scheme MiraiNoHitohira   -configuration Release   -destination 'generic/platform=iOS'   -derivedDataPath "$build_folder/DerivedData"   CODE_SIGNING_ALLOWED=NO   CODE_SIGNING_REQUIRED=NO   build
+cat "$project_root/App/Scene.swift" "$project_root/scripts/check-typing.swift" \
+  | xcrun swift - "$project_root/App/Resources/scenes.json"
+
+xcodebuild \
+  -project MiraiNoHitohira.xcodeproj \
+  -scheme MiraiNoHitohira \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -derivedDataPath "$build_folder/DerivedData" \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  build
 
 app="$build_folder/DerivedData/Build/Products/Release-iphoneos/MiraiNoHitohira.app"
 test -x "$app/MiraiNoHitohira"

@@ -105,8 +105,7 @@ final class MorningModel {
 
     var page: Page = .today
     var stage: Stage = .typing
-    var draft = ""
-    var committed = ""
+    private(set) var letter = LetterDraft()
     var inputSession = 0
     var customText = ""
     var message: String?
@@ -143,7 +142,8 @@ final class MorningModel {
         let cards = defaults.data(forKey: "postcards").flatMap { try? JSONDecoder().decode([Postcard].self, from: $0) } ?? []
         date = now
         passage = library.passage(on: now, custom: nil)
-        let revisedCards = cards.map(library.revisedPostcard)
+        var postcardIDs: Set<String> = []
+        let revisedCards = cards.map(library.revisedPostcard).filter { postcardIDs.insert($0.id).inserted }
         postcards = revisedCards
         if revisedCards.map(\.id) != cards.map(\.id),
            let data = try? JSONEncoder().encode(revisedCards) {
@@ -171,8 +171,6 @@ final class MorningModel {
             wakeSession = true
         }
     }
-
-    var match: MatchState { MatchState(reference: passage.text, typed: committed) }
 
     func observeAlarms() async {
         guard !observing else { return }
@@ -224,8 +222,7 @@ final class MorningModel {
     private func restoreToday() {
         date = .now
         passage = library.passage(on: date, custom: customText)
-        draft = ""
-        committed = ""
+        letter = LetterDraft()
         stage = postcards.contains { $0.day == Postcard.dayKey(date) && $0.text == passage.text } ? .saved : .typing
     }
 
@@ -239,19 +236,29 @@ final class MorningModel {
 
     func input(_ text: String, isComposing: Bool) {
         guard page == .today, stage == .typing else { return }
-        if draft != text, soundEnabled { sounds.playKey() }
-        draft = text
+        if letter.text != text { playKeyFeedback() }
+        letter.edit(text, isComposing: isComposing)
         resetIdleTimer()
-        guard !isComposing else { return }
-        committed = text
-        guard match.complete else { return }
-        let card = Postcard(day: Postcard.dayKey(date), date: date, text: passage.text, art: passage.image, description: passage.description, title: passage.title)
+    }
+
+    func sendToday() {
+        guard page == .today, stage == .typing, letter.canSend(passage.text) else { return }
+        let card = Postcard(day: Postcard.dayKey(date), date: date, text: passage.text, art: passage.image,
+                            description: passage.description, title: passage.title)
         if !postcards.contains(where: { $0.id == card.id }) {
             postcards.insert(card, at: 0)
             if let data = try? JSONEncoder().encode(postcards) { defaults.set(data, forKey: "postcards") }
         }
         finishWake()
         stage = .saved
+        playSendFeedback()
+    }
+
+    func playKeyFeedback() {
+        if soundEnabled { sounds.playKey() }
+    }
+
+    func playSendFeedback() {
         if soundEnabled { sounds.playSaved() }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
@@ -265,6 +272,7 @@ final class MorningModel {
         if cancelReminder() == false { return }
         message = nil
         stage = .typing
+        if letter.isComposing { letter.edit(letter.committed, isComposing: false) }
         inputSession += 1
         resetIdleTimer()
     }
