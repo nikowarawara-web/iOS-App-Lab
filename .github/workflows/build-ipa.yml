@@ -12,12 +12,12 @@ permissions:
 
 concurrency:
   group: ios-ipa
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build ipa]')
-    runs-on: macos-26
+    runs-on: macos-26-intel
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
