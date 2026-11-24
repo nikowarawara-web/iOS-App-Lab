@@ -87,8 +87,8 @@ struct JournalView: View {
                         scroll.scrollTo("sendPostcard", anchor: .bottom)
                     }
                 }
-                .onChange(of: model.stage) { _, stage in
-                    guard stage == .saved, model.page == .today,
+                .onChange(of: model.stage == .saved && flight == nil) { _, delivered in
+                    guard delivered, model.page == .today,
                           SceneImage.hasMotion(model.passage.image) else { return }
                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
                         scroll.scrollTo("todayArtwork", anchor: .top)
@@ -112,6 +112,7 @@ struct JournalView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.stage)
         .animation(reduceMotion ? nil : .easeInOut(duration: 1.1), value: light)
+        .allowsHitTesting(flight == nil)
         .overlay {
             if let flight {
                 PostcardFlightOverlay(postcard: flight) { self.flight = nil }
@@ -210,10 +211,12 @@ struct JournalView: View {
                         .id(model.inputSession)
                     readButton
                 case .saved:
-                    DeliveryReceipt()
-                    Button("絵葉書を見る") { model.select(.archive) }
-                        .font(.subheadline.weight(.semibold))
-                        .tint(clay)
+                    if flight == nil {
+                        DeliveryReceipt()
+                        Button("絵葉書を見る") { model.select(.archive) }
+                            .font(.subheadline.weight(.semibold))
+                            .tint(clay)
+                    }
                 case .reading:
                     Text("今日も、よい一日を。").font(handwritten(.headline, bold: true))
                     Button("書き写す") { model.startTyping() }
@@ -228,7 +231,9 @@ struct JournalView: View {
 
     private func sendToday() {
         guard model.sendToday() else { return }
-        if !reduceMotion { flight = FlyingPostcard(art: model.passage.image, title: model.passage.title) }
+        let animated = !reduceMotion
+        model.playSendFeedback(animated: animated)
+        if animated { flight = FlyingPostcard(art: model.passage.image, title: model.passage.title) }
     }
 
     private var readButton: some View {
@@ -693,20 +698,29 @@ private struct PostcardFlightOverlay: View {
 
     var body: some View {
         GeometryReader { bounds in
-            let width = min(bounds.size.width * 0.64, 280)
-            TimelineView(.animation) { clock in
+            let screen = bounds.size
+            let width = max(20, min(screen.width * 0.75, screen.height * 0.68, 340))
+            let cardSize = CGSize(width: width, height: (width - 16) / 1.53 + 49)
+            let launchY = min(screen.height * 0.73, screen.height - cardSize.height * 0.44 - 18)
+            let hoverY = max(screen.height * 0.28, cardSize.height * 0.5 + 57)
+            TimelineView(.animation(minimumInterval: 1.0 / 60)) { clock in
                 let time = max(0, clock.date.timeIntervalSince(postcard.launchedAt))
-                let lift = ease(time / 0.27)
-                let travel = pow(clamp((time - 0.27) / 0.85), 1.34)
-                let fade = ease((time - 0.83) / 0.29)
+                let lift = ease(time / 1.72)
+                let reveal = ease(time / 0.28)
+                let curtain = reveal * (1 - ease((time - 3.63) / 1.02))
+                let sway = sin(lift * .pi)
+                let hover = sin(time * 3.6) * 2.6 * lift
+                let firelight = ease((time - PostcardBurn.ignition) / 0.36) * (1 - ease((time - 3.53) / 0.92))
                 ZStack {
-                    Color.black.opacity(0.15 * lift * (1 - fade))
-                    face(width: width)
-                        .scaleEffect(CGFloat(0.82 + 0.21 * lift - 0.73 * travel))
-                        .rotationEffect(.degrees(-6 - 3 * lift + 25 * travel))
-                        .opacity(1 - fade)
-                        .position(x: bounds.size.width * CGFloat(0.5 - 0.08 * lift + 0.15 * travel),
-                                  y: bounds.size.height * CGFloat(0.72 - 0.17 * lift - 0.69 * travel))
+                    Color(red: 0.11, green: 0.073, blue: 0.10).opacity(0.64 * curtain)
+                    RadialGradient(colors: [.orange.opacity(0.10 * curtain + 0.17 * firelight), .clear],
+                                   center: UnitPoint(x: 0.50, y: 0.30), startRadius: 0, endRadius: width)
+                    burningCard(size: cardSize, time: time)
+                        .scaleEffect(CGFloat(0.78 + 0.22 * lift + 0.035 * sway))
+                        .rotationEffect(.degrees(-7 + 7 * lift + 14 * sway))
+                        .opacity(reveal)
+                        .position(x: screen.width * CGFloat(0.49 + 0.12 * sway),
+                                  y: launchY + (hoverY - launchY) * lift + hover)
                 }
             }
             .clipped()
@@ -715,18 +729,40 @@ private struct PostcardFlightOverlay: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .task { @MainActor in
-            do { try await Task.sleep(for: .seconds(1.19)) } catch { return }
+            let remaining = max(0, PostcardBurn.duration + postcard.launchedAt.timeIntervalSinceNow)
+            do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             onArrival()
         }
     }
 
-    private func face(width: CGFloat) -> some View {
-        VStack(spacing: 7) {
+    private func burningCard(size: CGSize, time: Double) -> some View {
+        let burn = PostcardBurn(time: time, size: size)
+        let bleed: CGFloat = 144
+        return face(size: size)
+            .overlay {
+                if time >= PostcardBurn.ignition {
+                    Canvas { context, _ in burn.drawScorch(in: context) }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .mask(burn.remainingPaper().fill(.white))
+            .shadow(color: .black.opacity(0.45), radius: 18, y: 10)
+            .overlay {
+                if time >= PostcardBurn.ignition {
+                    Canvas { context, _ in burn.drawLight(in: context, bleed: bleed) }
+                        .frame(width: size.width + 2 * bleed, height: size.height + 2 * bleed)
+                }
+            }
+    }
+
+    private func face(size: CGSize) -> some View {
+        let imageWidth = size.width - 16
+        return VStack(spacing: 7) {
             if let image = postcard.artwork {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(1.53, contentMode: .fill)
-                    .frame(width: width - 16, height: (width - 16) / 1.53)
+                    .frame(width: imageWidth, height: imageWidth / 1.53)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 5))
             }
@@ -742,20 +778,17 @@ private struct PostcardFlightOverlay: View {
                     .foregroundStyle(clay)
             }
             .padding(.horizontal, 3)
-            .padding(.bottom, 3)
+            .frame(height: 26)
         }
         .padding(8)
-        .frame(width: width)
+        .frame(width: size.width, height: size.height)
         .foregroundStyle(ink)
         .background(paper, in: RoundedRectangle(cornerRadius: 10))
         .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(clay.opacity(0.18)) }
-        .shadow(color: .black.opacity(0.27), radius: 14, y: 9)
     }
 
-    private func clamp(_ amount: Double) -> Double { min(1, max(0, amount)) }
-
     private func ease(_ amount: Double) -> Double {
-        let t = clamp(amount)
+        let t = min(1, max(0, amount))
         return t * t * (3 - 2 * t)
     }
 }
@@ -772,7 +805,7 @@ private struct DeliveryReceipt: View {
 private struct PostcardReplay: View {
     let card: Postcard
     let onKey: () -> Void
-    let onSent: () -> Void
+    let onSent: (Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -801,13 +834,15 @@ private struct PostcardReplay: View {
                         .padding(13)
                         .background(paper, in: RoundedRectangle(cornerRadius: 15))
                         if sent {
-                            VStack(alignment: .leading, spacing: 13) {
-                                DeliveryReceipt()
-                                Button("絵葉書に戻る") { dismiss() }
-                                    .font(.subheadline.weight(.semibold))
-                                    .tint(clay)
+                            if flight == nil {
+                                VStack(alignment: .leading, spacing: 13) {
+                                    DeliveryReceipt()
+                                    Button("絵葉書に戻る") { dismiss() }
+                                        .font(.subheadline.weight(.semibold))
+                                        .tint(clay)
+                                }
+                                .padding(14)
                             }
-                            .padding(14)
                         } else {
                             PostcardComposer(passage: card.text, letter: letter,
                                              onEdit: updateDraft, onSend: sendAgain)
@@ -822,8 +857,8 @@ private struct PostcardReplay: View {
                 .onChange(of: letter.canSend(card.text)) { _, ready in
                     if ready && !sent { scroll.scrollTo("sendPostcard", anchor: .bottom) }
                 }
-                .onChange(of: sent) { _, sent in
-                    if sent {
+                .onChange(of: sent && flight == nil) { _, delivered in
+                    if delivered {
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
                             scroll.scrollTo("replayArtwork", anchor: .top)
                         }
@@ -840,12 +875,14 @@ private struct PostcardReplay: View {
                 }
             }
         }
+        .allowsHitTesting(flight == nil)
         .overlay {
             if let flight {
                 PostcardFlightOverlay(postcard: flight) { self.flight = nil }
                     .id(flight.id)
             }
         }
+        .interactiveDismissDisabled(flight != nil)
     }
 
     private func updateDraft(_ text: String, _ isComposing: Bool) {
@@ -856,9 +893,10 @@ private struct PostcardReplay: View {
 
     private func sendAgain() {
         guard !sent, letter.canSend(card.text) else { return }
-        if !reduceMotion { flight = FlyingPostcard(art: card.art, title: card.title) }
+        let animated = !reduceMotion
+        onSent(animated)
+        if animated { flight = FlyingPostcard(art: card.art, title: card.title) }
         sent = true
-        onSent()
     }
 }
 

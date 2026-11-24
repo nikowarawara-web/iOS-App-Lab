@@ -251,7 +251,6 @@ final class MorningModel {
         }
         finishWake()
         stage = .saved
-        playSendFeedback()
         return true
     }
 
@@ -259,8 +258,8 @@ final class MorningModel {
         if soundEnabled { sounds.playKey() }
     }
 
-    func playSendFeedback() {
-        if soundEnabled { sounds.playFlight() }
+    func playSendFeedback(animated: Bool) {
+        if soundEnabled { sounds.playDelivery(animated: animated) }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
@@ -516,11 +515,12 @@ final class MorningModel {
 @MainActor
 private final class Effects {
     private lazy var keys = (0..<4).compactMap { _ in player("Key") }
-    private lazy var flight = player("Flight") ?? player("Saved")
+    private lazy var saved = player("Saved")
+    private lazy var flight = player("Flight", fileExtension: "m4a")
     private var next = 0
 
-    private func player(_ name: String) -> AVAudioPlayer? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "wav"),
+    private func player(_ name: String, fileExtension: String = "wav") -> AVAudioPlayer? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: fileExtension),
               let audio = try? AVAudioPlayer(contentsOf: url) else { return nil }
         try? AVAudioSession.sharedInstance().setCategory(.ambient)
         audio.prepareToPlay()
@@ -535,8 +535,9 @@ private final class Effects {
         key.play()
     }
 
-    func playFlight() {
-        flight?.currentTime = 0
-        flight?.play()
+    func playDelivery(animated: Bool) {
+        let audio = animated ? flight ?? saved : saved
+        audio?.currentTime = 0
+        audio?.play()
     }
 }
