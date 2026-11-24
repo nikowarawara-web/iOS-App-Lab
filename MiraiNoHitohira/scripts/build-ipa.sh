@@ -43,7 +43,7 @@ for index in images:
     image = app / "Memories" / f"scene{index}.jpg"
     if not image.is_file() or not image.stat().st_size:
         raise SystemExit(f"Missing bundled illustration: {image.name}")
-for index in range(25, 34):
+for index in (*range(8, 20), *range(25, 37)):
     motion = app / "Motion" / f"scene{index}.mp4"
     if not motion.is_file() or not motion.stat().st_size:
         raise SystemExit(f"Missing bundled animation: {motion.name}")
