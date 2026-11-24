@@ -241,8 +241,8 @@ final class MorningModel {
         resetIdleTimer()
     }
 
-    func sendToday() {
-        guard page == .today, stage == .typing, letter.canSend(passage.text) else { return }
+    func sendToday() -> Bool {
+        guard page == .today, stage == .typing, letter.canSend(passage.text) else { return false }
         let card = Postcard(day: Postcard.dayKey(date), date: date, text: passage.text, art: passage.image,
                             description: passage.description, title: passage.title)
         if !postcards.contains(where: { $0.id == card.id }) {
@@ -252,6 +252,7 @@ final class MorningModel {
         finishWake()
         stage = .saved
         playSendFeedback()
+        return true
     }
 
     func playKeyFeedback() {
@@ -259,7 +260,7 @@ final class MorningModel {
     }
 
     func playSendFeedback() {
-        if soundEnabled { sounds.playSaved() }
+        if soundEnabled { sounds.playFlight() }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
@@ -515,7 +516,7 @@ final class MorningModel {
 @MainActor
 private final class Effects {
     private lazy var keys = (0..<4).compactMap { _ in player("Key") }
-    private lazy var saved = player("Saved")
+    private lazy var flight = player("Flight") ?? player("Saved")
     private var next = 0
 
     private func player(_ name: String) -> AVAudioPlayer? {
@@ -534,8 +535,8 @@ private final class Effects {
         key.play()
     }
 
-    func playSaved() {
-        saved?.currentTime = 0
-        saved?.play()
+    func playFlight() {
+        flight?.currentTime = 0
+        flight?.play()
     }
 }

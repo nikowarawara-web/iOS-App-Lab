@@ -55,6 +55,7 @@ struct JournalView: View {
     let light: JournalLight
     @State private var editingAlarm: WakeAlarm?
     @State private var replayCard: Postcard?
+    @State private var flight: FlyingPostcard?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var skyInk: Color { light.usesDarkText ? ink : Color(red: 1, green: 0.94, blue: 0.85) }
@@ -111,6 +112,12 @@ struct JournalView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.stage)
         .animation(reduceMotion ? nil : .easeInOut(duration: 1.1), value: light)
+        .overlay {
+            if let flight {
+                PostcardFlightOverlay(postcard: flight) { self.flight = nil }
+                    .id(flight.id)
+            }
+        }
         .sheet(item: $replayCard) { card in
             PostcardReplay(card: card, onKey: model.playKeyFeedback, onSent: model.playSendFeedback)
         }
@@ -168,7 +175,7 @@ struct JournalView: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 SceneImage(index: model.passage.image, description: model.passage.description,
-                           playOnCompletion: model.stage == .saved)
+                           playOnCompletion: model.stage == .saved && flight == nil)
                     .id("todayArtwork")
                     .padding(9)
                 VStack(alignment: .leading, spacing: 13) {
@@ -199,7 +206,7 @@ struct JournalView: View {
                     readButton
                 case .typing:
                     PostcardComposer(passage: model.passage.text, letter: model.letter,
-                                     onEdit: model.input, onSend: model.sendToday)
+                                     onEdit: model.input, onSend: sendToday)
                         .id(model.inputSession)
                     readButton
                 case .saved:
@@ -217,6 +224,11 @@ struct JournalView: View {
             .padding(17)
             .background(parchment, in: RoundedRectangle(cornerRadius: 15))
         }
+    }
+
+    private func sendToday() {
+        guard model.sendToday() else { return }
+        if !reduceMotion { flight = FlyingPostcard(art: model.passage.image, title: model.passage.title) }
     }
 
     private var readButton: some View {
@@ -480,7 +492,7 @@ private struct SceneImage: View {
 
     static func hasMotion(_ index: Int) -> Bool { index == 25 || index == 26 }
 
-    private var artwork: UIImage? {
+    static func artwork(for index: Int) -> UIImage? {
         if index < 8 { return UIImage(named: "scene\(index).jpg") }
         let path = Bundle.main.path(forResource: "scene\(index)", ofType: "jpg", inDirectory: "Memories")
         return path.flatMap { UIImage(contentsOfFile: $0) }
@@ -516,7 +528,7 @@ private struct SceneImage: View {
         Color(red: 0.93, green: 0.84, blue: 0.73)
             .aspectRatio(1.53, contentMode: .fit)
             .overlay {
-                if let image = artwork {
+                if let image = Self.artwork(for: index) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -663,6 +675,91 @@ private struct PostcardComposer: View {
     }
 }
 
+private struct FlyingPostcard: Identifiable {
+    let id = UUID()
+    let artwork: UIImage?
+    let title: String?
+    let launchedAt = Date()
+
+    init(art: Int, title: String?) {
+        self.artwork = SceneImage.artwork(for: art)
+        self.title = title
+    }
+}
+
+private struct PostcardFlightOverlay: View {
+    let postcard: FlyingPostcard
+    let onArrival: () -> Void
+
+    var body: some View {
+        GeometryReader { bounds in
+            let width = min(bounds.size.width * 0.64, 280)
+            TimelineView(.animation) { clock in
+                let time = max(0, clock.date.timeIntervalSince(postcard.launchedAt))
+                let lift = ease(time / 0.27)
+                let travel = pow(clamp((time - 0.27) / 0.85), 1.34)
+                let fade = ease((time - 0.83) / 0.29)
+                ZStack {
+                    Color.black.opacity(0.15 * lift * (1 - fade))
+                    face(width: width)
+                        .scaleEffect(CGFloat(0.82 + 0.21 * lift - 0.73 * travel))
+                        .rotationEffect(.degrees(-6 - 3 * lift + 25 * travel))
+                        .opacity(1 - fade)
+                        .position(x: bounds.size.width * CGFloat(0.5 - 0.08 * lift + 0.15 * travel),
+                                  y: bounds.size.height * CGFloat(0.72 - 0.17 * lift - 0.69 * travel))
+                }
+            }
+            .clipped()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .task { @MainActor in
+            do { try await Task.sleep(for: .seconds(1.19)) } catch { return }
+            onArrival()
+        }
+    }
+
+    private func face(width: CGFloat) -> some View {
+        VStack(spacing: 7) {
+            if let image = postcard.artwork {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(1.53, contentMode: .fill)
+                    .frame(width: width - 16, height: (width - 16) / 1.53)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+            HStack {
+                if let title = postcard.title {
+                    Text(title)
+                        .font(handwritten(.subheadline, bold: true))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 5)
+                Image(systemName: "paperplane")
+                    .font(.caption)
+                    .foregroundStyle(clay)
+            }
+            .padding(.horizontal, 3)
+            .padding(.bottom, 3)
+        }
+        .padding(8)
+        .frame(width: width)
+        .foregroundStyle(ink)
+        .background(paper, in: RoundedRectangle(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(clay.opacity(0.18)) }
+        .shadow(color: .black.opacity(0.27), radius: 14, y: 9)
+    }
+
+    private func clamp(_ amount: Double) -> Double { min(1, max(0, amount)) }
+
+    private func ease(_ amount: Double) -> Double {
+        let t = clamp(amount)
+        return t * t * (3 - 2 * t)
+    }
+}
+
 private struct DeliveryReceipt: View {
     var body: some View {
         Label("未来へ送りました", systemImage: "paperplane.fill")
@@ -681,6 +778,7 @@ private struct PostcardReplay: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var letter = LetterDraft()
     @State private var sent = false
+    @State private var flight: FlyingPostcard?
 
     var body: some View {
         NavigationStack {
@@ -688,7 +786,7 @@ private struct PostcardReplay: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 12) {
-                            SceneImage(index: card.art, description: card.description, playOnCompletion: sent)
+                            SceneImage(index: card.art, description: card.description, playOnCompletion: sent && flight == nil)
                                 .id("replayArtwork")
                             if let title = card.title {
                                 Text(title).font(handwritten(.title2, bold: true))
@@ -742,6 +840,12 @@ private struct PostcardReplay: View {
                 }
             }
         }
+        .overlay {
+            if let flight {
+                PostcardFlightOverlay(postcard: flight) { self.flight = nil }
+                    .id(flight.id)
+            }
+        }
     }
 
     private func updateDraft(_ text: String, _ isComposing: Bool) {
@@ -752,6 +856,7 @@ private struct PostcardReplay: View {
 
     private func sendAgain() {
         guard !sent, letter.canSend(card.text) else { return }
+        if !reduceMotion { flight = FlyingPostcard(art: card.art, title: card.title) }
         sent = true
         onSent()
     }
