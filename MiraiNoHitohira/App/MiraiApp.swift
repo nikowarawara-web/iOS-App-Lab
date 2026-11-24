@@ -62,23 +62,32 @@ struct JournalView: View {
     var body: some View {
         GeometryReader { geometry in
             let side = geometry.size.width > 500 ? 38.0 : 22.0
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    switch model.page {
-                    case .today: today
-                    case .archive: archive
-                    case .alarm: alarm
+            ScrollViewReader { scroll in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        switch model.page {
+                        case .today: today
+                        case .archive: archive
+                        case .alarm: alarm
+                        }
+                    }
+                    .frame(maxWidth: 530)
+                    .padding(.horizontal, side)
+                    .padding(.top, 21)
+                    .padding(.bottom, 36)
+                    .frame(maxWidth: .infinity)
+                    .id(model.page)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .safeAreaInset(edge: .top, spacing: 0) { header }
+                .onChange(of: model.stage) { _, stage in
+                    guard stage == .saved, model.page == .today,
+                          SceneImage.hasMotion(model.passage.image) else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
+                        scroll.scrollTo("todayArtwork", anchor: .top)
                     }
                 }
-                .frame(maxWidth: 530)
-                .padding(.horizontal, side)
-                .padding(.top, 21)
-                .padding(.bottom, 36)
-                .frame(maxWidth: .infinity)
-                .id(model.page)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .top, spacing: 0) { header }
         }
         .foregroundStyle(ink)
         .background {
@@ -149,7 +158,9 @@ struct JournalView: View {
                 title(model.stage == .waking ? "おはようございます" : "今日の一片")
             }
             VStack(alignment: .leading, spacing: 0) {
-                SceneImage(index: model.passage.image, description: model.passage.description)
+                SceneImage(index: model.passage.image, description: model.passage.description,
+                           playOnCompletion: model.stage == .saved)
+                    .id("todayArtwork")
                     .padding(9)
                 VStack(alignment: .leading, spacing: 13) {
                     if let name = model.passage.title {
@@ -494,6 +505,12 @@ private struct AlarmEditor: View {
 private struct SceneImage: View {
     let index: Int
     let description: String
+    var playOnCompletion = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var player: AVPlayer?
+
+    static func hasMotion(_ index: Int) -> Bool { index == 25 || index == 26 }
 
     private var artwork: UIImage? {
         if index < 8 { return UIImage(named: "scene\(index).jpg") }
@@ -501,7 +518,33 @@ private struct SceneImage: View {
         return path.flatMap { UIImage(contentsOfFile: $0) }
     }
 
+    private var motionURL: URL? {
+        guard !reduceMotion, Self.hasMotion(index) else { return nil }
+        return Bundle.main.url(forResource: "scene\(index)", withExtension: "mp4", subdirectory: "Motion")
+    }
+
     var body: some View {
+        Group {
+            if motionURL != nil {
+                Button(action: playMotion) { picture }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(description)
+                    .accessibilityHint("絵のアニメーションを再生")
+            } else {
+                picture.accessibilityLabel(description).accessibilityAddTraits(.isImage)
+            }
+        }
+        .onChange(of: playOnCompletion) { _, completed in
+            if completed { playMotion() }
+        }
+        .onChange(of: index) { _, _ in releasePlayer() }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced { releasePlayer() }
+        }
+        .onDisappear(perform: releasePlayer)
+    }
+
+    private var picture: some View {
         Color(red: 0.93, green: 0.84, blue: 0.73)
             .aspectRatio(1.53, contentMode: .fit)
             .overlay {
@@ -510,10 +553,69 @@ private struct SceneImage: View {
                         .resizable()
                         .scaledToFill()
                 }
+                if let player {
+                    InlineMotion(player: player)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .accessibilityLabel(description)
-            .accessibilityAddTraits(.isImage)
+    }
+
+    private func playMotion() {
+        guard let motionURL else { return }
+        releasePlayer()
+        let next = AVPlayer(url: motionURL)
+        next.isMuted = true
+        next.actionAtItemEnd = .pause
+        player = next
+        next.play()
+    }
+
+    private func releasePlayer() {
+        player?.pause()
+        player = nil
+    }
+}
+
+private struct InlineMotion: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> Surface {
+        let surface = Surface()
+        surface.isOpaque = false
+        surface.backgroundColor = .clear
+        surface.video.videoGravity = .resizeAspectFill
+        return surface
+    }
+
+    func updateUIView(_ surface: Surface, context: Context) {
+        surface.setPlayer(player)
+    }
+
+    static func dismantleUIView(_ surface: Surface, coordinator: ()) {
+        surface.setPlayer(nil)
+    }
+
+    final class Surface: UIView {
+        private var readiness: NSKeyValueObservation?
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var video: AVPlayerLayer { layer as! AVPlayerLayer }
+
+        func setPlayer(_ player: AVPlayer?) {
+            guard video.player !== player else { return }
+            readiness = nil
+            video.opacity = 0
+            video.player = player
+            if let player {
+                readiness = video.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self, weak player] _, _ in
+                    DispatchQueue.main.async {
+                        guard let self, let player, self.video.player === player else { return }
+                        self.video.opacity = self.video.isReadyForDisplay ? 1 : 0
+                    }
+                }
+            }
+        }
     }
 }
 
