@@ -12,6 +12,14 @@
       "tintColor": "8A4840",
       "versions": [
         {
+          "version": "1.2.2",
+          "date": "2026-11-24T12:59:01Z",
+          "downloadURL": "https://github.com/nikowarawara-web/iOS-App-Lab/releases/download/mirai-updates/MiraiNoHitohira-v1.2.2-5.ipa",
+          "size": 12591869,
+          "minOSVersion": "26.0",
+          "localizedDescription": "バージョン 1.2.2"
+        },
+        {
           "version": "1.2.1",
           "date": "2026-11-24T12:53:36Z",
           "downloadURL": "https://github.com/nikowarawara-web/iOS-App-Lab/releases/download/mirai-updates/MiraiNoHitohira-v1.2.1-4.ipa",
@@ -36,10 +44,10 @@
           "localizedDescription": "バージョン 1.1"
         }
       ],
-      "version": "1.2.1",
-      "versionDate": "2026-11-24T12:53:36Z",
-      "downloadURL": "https://github.com/nikowarawara-web/iOS-App-Lab/releases/download/mirai-updates/MiraiNoHitohira-v1.2.1-4.ipa",
-      "size": 12585737
+      "version": "1.2.2",
+      "versionDate": "2026-11-24T12:59:01Z",
+      "downloadURL": "https://github.com/nikowarawara-web/iOS-App-Lab/releases/download/mirai-updates/MiraiNoHitohira-v1.2.2-5.ipa",
+      "size": 12591869
     }
   ]
 }
