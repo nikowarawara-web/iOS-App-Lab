@@ -30,10 +30,16 @@ private let dusk = Color(red: 0.37, green: 0.25, blue: 0.32)
 private let moonlight = Color(red: 1, green: 0.94, blue: 0.85)
 private let dust = Color(red: 0.90, green: 0.79, blue: 0.77)
 
-private func mincho(_ style: Font.TextStyle, bold: Bool = false) -> Font {
-    let face = bold ? "HiraMinProN-W6" : "HiraMinProN-W3"
-    if UIFont(name: face, size: 17) != nil { return .custom(face, size: style == .largeTitle ? 34 : style == .title2 ? 22 : 17, relativeTo: style) }
-    return .system(style, design: .serif, weight: bold ? .semibold : .regular)
+private func handwritten(_ style: Font.TextStyle, bold: Bool = false) -> Font {
+    let face = bold ? "KleeOne-SemiBold" : "KleeOne-Regular"
+    let size: CGFloat
+    switch style {
+    case .largeTitle: size = 34
+    case .title2: size = 23
+    case .subheadline: size = 15
+    default: size = 18
+    }
+    return .custom(face, size: size, relativeTo: style)
 }
 
 struct JournalView: View {
@@ -79,7 +85,7 @@ struct JournalView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 Label("未来の一片", systemImage: "sun.horizon")
-                    .font(.system(.subheadline, design: .serif, weight: .semibold))
+                    .font(handwritten(.subheadline, bold: true))
                     .foregroundStyle(moonlight)
                 Spacer(minLength: 6)
                 tabs
@@ -131,11 +137,11 @@ struct JournalView: View {
                 VStack(alignment: .leading, spacing: 13) {
                     if let name = model.passage.title {
                         Text(name)
-                            .font(mincho(.title2, bold: true))
+                            .font(handwritten(.title2, bold: true))
                             .accessibilityAddTraits(.isHeader)
                     }
                     Text(markedPassage)
-                        .font(mincho(.body))
+                        .font(handwritten(.body))
                         .lineSpacing(8)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel(model.passage.text)
@@ -164,7 +170,7 @@ struct JournalView: View {
                         .font(.subheadline.weight(.semibold))
                         .tint(clay)
                 case .reading:
-                    Text("今日も、よい一日を。").font(.system(.headline, design: .serif))
+                    Text("今日も、よい一日を。").font(handwritten(.headline, bold: true))
                     Button("書き写す") { model.startTyping() }
                         .font(.subheadline.weight(.semibold))
                         .tint(clay)
@@ -249,10 +255,10 @@ struct JournalView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(earth)
                         if let name = card.title {
-                            Text(name).font(mincho(.title2, bold: true)).accessibilityAddTraits(.isHeader)
+                            Text(name).font(handwritten(.title2, bold: true)).accessibilityAddTraits(.isHeader)
                         }
                         Text(card.text)
-                            .font(mincho(.body))
+                            .font(handwritten(.body))
                             .lineSpacing(7)
                     }
                     .padding(13)
@@ -355,7 +361,7 @@ struct JournalView: View {
 
     private func title(_ label: String) -> some View {
         Text(label)
-            .font(mincho(.largeTitle, bold: true))
+            .font(handwritten(.largeTitle, bold: true))
             .foregroundStyle(moonlight)
             .accessibilityAddTraits(.isHeader)
     }
