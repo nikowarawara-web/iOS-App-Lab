@@ -28,6 +28,14 @@ struct SceneLibrary: Decodable {
                     legacyDescriptions: Array(repeating: artwork, count: 8))
     }
 
+    func revisedPostcard(_ card: Postcard) -> Postcard {
+        let previousDeliveryText = "歩く人が立ち止まると、荷物を運ぶロボットも少し手前で待ちます。その距離なら、体をひねらず袋を取れると教えてもらいます。"
+        guard card.art == 25, card.text == previousDeliveryText,
+              let revised = entries.first(where: { $0.image == card.art }) else { return card }
+        return Postcard(day: card.day, date: card.date, text: revised.text, art: card.art,
+                        description: revised.description, title: revised.title)
+    }
+
     func passage(on date: Date, custom: String?) -> Passage {
         if let custom, !Passage.letters(custom).isEmpty {
             if let passage = entries.first(where: { $0.text == custom }) { return passage }

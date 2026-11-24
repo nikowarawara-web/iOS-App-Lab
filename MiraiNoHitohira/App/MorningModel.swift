@@ -140,7 +140,12 @@ final class MorningModel {
         let cards = defaults.data(forKey: "postcards").flatMap { try? JSONDecoder().decode([Postcard].self, from: $0) } ?? []
         date = now
         passage = library.passage(on: now, custom: nil)
-        postcards = cards
+        let revisedCards = cards.map(library.revisedPostcard)
+        postcards = revisedCards
+        if revisedCards.map(\.id) != cards.map(\.id),
+           let data = try? JSONEncoder().encode(revisedCards) {
+            defaults.set(data, forKey: "postcards")
+        }
         soundEnabled = defaults.object(forKey: "soundEnabled") as? Bool ?? true
         if let data = defaults.data(forKey: "wakeAlarms"),
            let saved = try? JSONDecoder().decode([WakeAlarm].self, from: data) {
