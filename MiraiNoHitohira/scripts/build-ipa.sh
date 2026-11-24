@@ -14,6 +14,22 @@ for file in Info.plist scenes.json scene0.jpg scene7.jpg Key.wav Saved.wav Dawn.
   test -s "$app/$file"
 done
 
+python3 - "$app" <<'PYTHON'
+import json
+import pathlib
+import sys
+
+app = pathlib.Path(sys.argv[1])
+entries = json.loads((app / "scenes.json").read_text())["entries"]
+images = {entry["image"] for entry in entries}
+if len(entries) != 29 or images != set(range(8, 37)):
+    raise SystemExit("Expected 29 distinct daily illustrations")
+for index in images:
+    image = app / "Memories" / f"scene{index}.jpg"
+    if not image.is_file() or not image.stat().st_size:
+        raise SystemExit(f"Missing bundled illustration: {image.name}")
+PYTHON
+
 mkdir -p "$build_folder/Payload" "$project_root/dist"
 ditto "$app" "$build_folder/Payload/MiraiNoHitohira.app"
 output="$project_root/dist/MiraiNoHitohira.ipa"

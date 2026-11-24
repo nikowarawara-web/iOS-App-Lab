@@ -20,14 +20,25 @@ struct MiraiApp: App {
     }
 }
 
-private let ink = Color(red: 0.21, green: 0.15, blue: 0.12)
-private let earth = Color(red: 0.43, green: 0.35, blue: 0.29)
-private let clay = Color(red: 0.53, green: 0.26, blue: 0.16)
-private let parchment = Color(red: 0.98, green: 0.95, blue: 0.90)
-private let paper = Color(red: 1, green: 0.99, blue: 0.96)
+private let ink = Color(red: 0.20, green: 0.16, blue: 0.17)
+private let earth = Color(red: 0.42, green: 0.32, blue: 0.30)
+private let clay = Color(red: 0.54, green: 0.28, blue: 0.24)
+private let parchment = Color(red: 0.95, green: 0.90, blue: 0.84)
+private let paper = Color(red: 0.99, green: 0.96, blue: 0.90)
+private let night = Color(red: 0.15, green: 0.15, blue: 0.23)
+private let dusk = Color(red: 0.37, green: 0.25, blue: 0.32)
+private let moonlight = Color(red: 1, green: 0.94, blue: 0.85)
+private let dust = Color(red: 0.90, green: 0.79, blue: 0.77)
+
+private func mincho(_ style: Font.TextStyle, bold: Bool = false) -> Font {
+    let face = bold ? "HiraMinProN-W6" : "HiraMinProN-W3"
+    if UIFont(name: face, size: 17) != nil { return .custom(face, size: style == .largeTitle ? 34 : style == .title2 ? 22 : 17, relativeTo: style) }
+    return .system(style, design: .serif, weight: bold ? .semibold : .regular)
+}
 
 struct JournalView: View {
     @Bindable var model: MorningModel
+    @State private var editingAlarm: WakeAlarm?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -53,9 +64,13 @@ struct JournalView: View {
         }
         .foregroundStyle(ink)
         .background {
-            LinearGradient(colors: [Color(red: 0.97, green: 0.90, blue: 0.80), parchment, paper],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
+            ZStack {
+                LinearGradient(colors: [night, dusk, Color(red: 0.52, green: 0.34, blue: 0.33)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                RadialGradient(colors: [Color(red: 0.95, green: 0.68, blue: 0.53).opacity(0.22), .clear],
+                               center: .bottomTrailing, startRadius: 8, endRadius: 440)
+            }
+            .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.stage)
     }
@@ -65,6 +80,7 @@ struct JournalView: View {
             HStack(spacing: 8) {
                 Label("未来の一片", systemImage: "sun.horizon")
                     .font(.system(.subheadline, design: .serif, weight: .semibold))
+                    .foregroundStyle(moonlight)
                 Spacer(minLength: 6)
                 tabs
             }
@@ -74,8 +90,8 @@ struct JournalView: View {
         .padding(.vertical, 6)
         .frame(maxWidth: 606)
         .frame(maxWidth: .infinity)
-        .background(parchment)
-        .overlay(alignment: .bottom) { Divider().overlay(clay.opacity(0.1)) }
+        .background(night.opacity(0.94))
+        .overlay(alignment: .bottom) { Rectangle().fill(moonlight.opacity(0.14)).frame(height: 1) }
     }
 
     private var tabs: some View {
@@ -93,8 +109,8 @@ struct JournalView: View {
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 8)
                 .frame(minHeight: 44)
-                .background(model.page == page ? clay.opacity(0.12) : .clear, in: Capsule())
-                .foregroundStyle(model.page == page ? clay : earth)
+                .background(model.page == page ? moonlight.opacity(0.15) : .clear, in: Capsule())
+                .foregroundStyle(model.page == page ? moonlight : dust)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(model.page == page ? .isSelected : [])
@@ -106,17 +122,31 @@ struct JournalView: View {
                 Text(dateLabel(model.date))
                     .font(.caption.weight(.semibold))
                     .tracking(1.2)
-                    .foregroundStyle(earth)
+                    .foregroundStyle(dust)
                 title(model.stage == .waking ? "おはようございます" : "今日の一片")
             }
-            SceneImage(index: model.passage.image, description: model.passage.description)
-            VStack(alignment: .leading, spacing: 17) {
-                Text(markedPassage)
-                    .font(.system(.title3, design: .serif, weight: .medium))
-                    .lineSpacing(7)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel(model.passage.text)
-                Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                SceneImage(index: model.passage.image, description: model.passage.description)
+                    .padding(9)
+                VStack(alignment: .leading, spacing: 13) {
+                    if let name = model.passage.title {
+                        Text(name)
+                            .font(mincho(.title2, bold: true))
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                    Text(markedPassage)
+                        .font(mincho(.body))
+                        .lineSpacing(8)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(model.passage.text)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 7)
+                .padding(.bottom, 19)
+            }
+            .background(paper, in: RoundedRectangle(cornerRadius: 15))
+            .shadow(color: .black.opacity(0.22), radius: 14, y: 7)
+            VStack(alignment: .leading, spacing: 13) {
                 switch model.stage {
                 case .waking:
                     if let message = model.message {
@@ -140,9 +170,8 @@ struct JournalView: View {
                         .tint(clay)
                 }
             }
-            .padding(19)
-            .background(paper, in: RoundedRectangle(cornerRadius: 23))
-            .overlay { RoundedRectangle(cornerRadius: 23).strokeBorder(clay.opacity(0.14)) }
+            .padding(17)
+            .background(parchment, in: RoundedRectangle(cornerRadius: 15))
         }
     }
 
@@ -150,20 +179,19 @@ struct JournalView: View {
         var result = AttributedString()
         var index = 0
         let letters = Passage.letters(model.committed)
-        let expected = Passage.letters(model.passage.text)
         for char in model.passage.text.precomposedStringWithCanonicalMapping {
             var part = AttributedString(String(char))
-            if !char.isPunctuation && !char.isWhitespace {
-                if model.stage == .typing && index < letters.count && index < expected.count {
-                    if letters[index] == expected[index] {
-                        part.foregroundColor = Color(red: 0.27, green: 0.37, blue: 0.23)
-                    } else {
-                        part.foregroundColor = Color(red: 0.58, green: 0.15, blue: 0.13)
-                        part.backgroundColor = clay.opacity(0.12)
-                    }
+            let expected = Passage.letters(String(char))
+            let typed = letters.dropFirst(index).prefix(expected.count)
+            if model.stage == .typing && !typed.isEmpty {
+                if typed.elementsEqual(expected.prefix(typed.count)) {
+                    part.foregroundColor = Color(red: 0.27, green: 0.37, blue: 0.23)
+                } else {
+                    part.foregroundColor = Color(red: 0.58, green: 0.15, blue: 0.13)
+                    part.backgroundColor = clay.opacity(0.12)
                 }
-                index += 1
             }
+            index += expected.count
             result.append(part)
         }
         return result
@@ -210,7 +238,7 @@ struct JournalView: View {
             title("未来の絵葉書")
             if model.postcards.isEmpty {
                 Text("書き写し終えた場面が、ここに並びます。")
-                    .foregroundStyle(earth)
+                    .foregroundStyle(dust)
                     .padding(.vertical, 12)
             }
             LazyVStack(spacing: 22) {
@@ -220,64 +248,115 @@ struct JournalView: View {
                         Text(dateLabel(card.date))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(earth)
+                        if let name = card.title {
+                            Text(name).font(mincho(.title2, bold: true)).accessibilityAddTraits(.isHeader)
+                        }
                         Text(card.text)
-                            .font(.system(.body, design: .serif))
-                            .lineSpacing(5)
+                            .font(mincho(.body))
+                            .lineSpacing(7)
                     }
-                    .padding(14)
-                    .background(paper, in: RoundedRectangle(cornerRadius: 23))
-                    .overlay { RoundedRectangle(cornerRadius: 23).strokeBorder(clay.opacity(0.14)) }
+                    .padding(13)
+                    .background(paper, in: RoundedRectangle(cornerRadius: 15))
+                    .shadow(color: .black.opacity(0.20), radius: 10, y: 5)
                 }
             }
         }
     }
 
     private var alarm: some View {
-        Group {
-            title("朝のアラーム")
-            VStack(alignment: .leading, spacing: 14) {
-                DatePicker("鳴らす時刻", selection: $model.alarmTime, displayedComponents: .hourAndMinute)
-                    .environment(\.locale, Locale(identifier: "ja_JP"))
-                    .tint(clay)
-                if let scheduled = model.scheduled {
-                    Label(scheduled.formatted(.dateTime.month().day().weekday().hour().minute().locale(Locale(identifier: "ja_JP"))),
-                          systemImage: "bell.badge")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(clay)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                title("朝のアラーム")
+                Spacer(minLength: 12)
+                Button {
+                    editingAlarm = WakeAlarm()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title3.weight(.semibold))
+                        .frame(width: 46, height: 46)
+                        .background(moonlight.opacity(0.14), in: Circle())
                 }
-                primary("次のこの時刻にセット", symbol: "alarm") {
-                    Task { await model.scheduleMorning() }
-                }
+                .buttonStyle(.plain)
+                .foregroundStyle(moonlight)
+                .accessibilityLabel("アラームを追加")
                 .disabled(model.busy)
-                HStack(spacing: 14) {
-                    if model.scheduled == nil {
-                        Button("20秒後にテスト") { Task { await model.scheduleMorning(test: true) } }
-                    } else {
-                        Button("アラームを解除", role: .destructive) { model.cancelMorning() }
+            }
+            if model.wakeAlarms.isEmpty {
+                Text("＋から起きる時刻を設定できます。")
+                    .font(.subheadline)
+                    .foregroundStyle(dust)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(model.wakeAlarms) { alarm in
+                        HStack(spacing: 14) {
+                            Button {
+                                editingAlarm = alarm
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(alarm.timeLabel)
+                                        .font(.system(.title, design: .rounded, weight: .medium))
+                                        .monospacedDigit()
+                                        .foregroundStyle(ink)
+                                    Text(alarm.repeatLabel)
+                                        .font(.footnote.weight(.medium))
+                                        .foregroundStyle(earth)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(model.busy)
+                            .accessibilityHint("編集")
+                            Toggle("", isOn: Binding(
+                                get: { alarm.enabled },
+                                set: { enabled in Task { await model.setAlarmEnabled(alarm, enabled: enabled) } }
+                            ))
+                            .labelsHidden()
+                            .tint(clay)
+                            .accessibilityLabel("\(alarm.timeLabel)のアラーム")
+                            .disabled(model.busy)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 13)
+                        if alarm.id != model.wakeAlarms.last?.id {
+                            Divider().padding(.horizontal, 18)
+                        }
                     }
                 }
-                .font(.subheadline)
-                .disabled(model.busy)
-                .tint(clay)
-                if let message = model.message {
+                .background(paper, in: RoundedRectangle(cornerRadius: 18))
+            }
+            VStack(alignment: .leading, spacing: 13) {
+                Toggle("入力音と完了音", isOn: $model.soundEnabled).tint(clay)
+                Divider()
+                if model.testScheduled {
+                    Button("テストを取り消す", role: .destructive) { model.cancelTest() }
+                        .disabled(model.busy)
+                } else {
+                    Button("20秒後にテスト") { Task { await model.scheduleTest() } }
+                        .disabled(model.busy)
+                }
+                if let message = model.alarmMessage {
                     Text(message).font(.footnote).foregroundStyle(earth)
                 }
             }
-            .padding(19)
-            .background(paper, in: RoundedRectangle(cornerRadius: 23))
-            Toggle("入力音と完了音", isOn: $model.soundEnabled)
-                .tint(clay)
-                .padding(19)
-                .background(paper, in: RoundedRectangle(cornerRadius: 23))
-            Text("アラームの「今日の一片を開く」から始めます。入力が1分途切れるか、画面を離れると再び鳴ります。")
+            .font(.subheadline)
+            .foregroundStyle(ink)
+            .tint(clay)
+            .padding(18)
+            .background(paper, in: RoundedRectangle(cornerRadius: 18))
+            Text("「今日の一片を開く」で絵と文章を表示します。入力が１分途切れるか、画面を離れると再び鳴ります。")
                 .font(.footnote)
-                .foregroundStyle(earth)
+                .foregroundStyle(dust)
+        }
+        .sheet(item: $editingAlarm) { draft in
+            AlarmEditor(model: model, alarm: draft)
         }
     }
 
     private func title(_ label: String) -> some View {
         Text(label)
-            .font(.system(.largeTitle, design: .serif, weight: .semibold))
+            .font(mincho(.largeTitle, bold: true))
+            .foregroundStyle(moonlight)
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -297,21 +376,118 @@ struct JournalView: View {
     }
 }
 
+private struct AlarmEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let model: MorningModel
+    let isExisting: Bool
+    @State private var draft: WakeAlarm
+    @State private var clock: Date
+
+    init(model: MorningModel, alarm: WakeAlarm) {
+        self.model = model
+        isExisting = model.wakeAlarms.contains { $0.id == alarm.id }
+        _draft = State(initialValue: alarm)
+        _clock = State(initialValue: alarm.dateSelection)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("時刻", selection: $clock, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .environment(\.locale, Locale(identifier: "ja_JP"))
+                    .frame(maxWidth: .infinity)
+                Section("繰り返し") {
+                    ViewThatFits {
+                        HStack(spacing: 18) { presets }
+                        VStack(alignment: .leading, spacing: 8) { presets }
+                    }
+                    .buttonStyle(.borderless)
+                    ForEach(WakeDay.allCases) { day in
+                        Button {
+                            if draft.days.contains(day) { draft.days.remove(day) }
+                            else { draft.days.insert(day) }
+                        } label: {
+                            HStack {
+                                Text(day.name).foregroundStyle(ink)
+                                Spacer()
+                                if draft.days.contains(day) {
+                                    Image(systemName: "checkmark").foregroundStyle(clay)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(draft.days.contains(day) ? .isSelected : [])
+                    }
+                }
+                if isExisting {
+                    Section {
+                        Button("アラームを削除", role: .destructive) {
+                            if model.deleteAlarm(draft) { dismiss() }
+                        }
+                    }
+                }
+                if let message = model.alarmMessage {
+                    Section { Text(message).font(.footnote).foregroundStyle(earth) }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(parchment)
+            .navigationTitle(isExisting ? "アラームを編集" : "アラームを追加")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let time = Calendar.current.dateComponents([.hour, .minute], from: clock)
+                        var next = draft
+                        next.hour = time.hour ?? 5
+                        next.minute = time.minute ?? 30
+                        Task { if await model.saveAlarm(next) { dismiss() } }
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .disabled(model.busy)
+            .interactiveDismissDisabled(model.busy)
+            .tint(clay)
+        }
+    }
+
+    private var presets: some View {
+        Group {
+            Button("１回のみ") { draft.days = [] }
+            Button("毎日") { draft.days = Set(WakeDay.allCases) }
+            Button("平日") { draft.days = Set(WakeDay.allCases.prefix(5)) }
+        }
+    }
+}
+
 private struct SceneImage: View {
     let index: Int
     let description: String
 
+    private var artwork: UIImage? {
+        if index < 8 { return UIImage(named: "scene\(index).jpg") }
+        let path = Bundle.main.path(forResource: "scene\(index)", ofType: "jpg", inDirectory: "Memories")
+        return path.flatMap { UIImage(contentsOfFile: $0) }
+    }
+
     var body: some View {
         Color(red: 0.93, green: 0.84, blue: 0.73)
-            .aspectRatio(1.6, contentMode: .fit)
+            .aspectRatio(1.53, contentMode: .fit)
             .overlay {
-                if let image = UIImage(named: "scene\(index).jpg") {
+                if let image = artwork {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 21))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .accessibilityLabel(description)
             .accessibilityAddTraits(.isImage)
     }

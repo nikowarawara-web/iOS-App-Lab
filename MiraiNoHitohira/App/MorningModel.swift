@@ -6,6 +6,47 @@ import UIKit
 
 struct MorningMetadata: AlarmMetadata {}
 
+enum WakeDay: Int, CaseIterable, Codable, Hashable, Identifiable {
+    case monday, tuesday, wednesday, thursday, friday, saturday, sunday
+
+    var id: Int { rawValue }
+    var shortName: String { ["月", "火", "水", "木", "金", "土", "日"][rawValue] }
+    var name: String { shortName + "曜日" }
+
+    var systemDay: Locale.Weekday {
+        [.monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday][rawValue]
+    }
+}
+
+struct WakeAlarm: Identifiable, Codable {
+    var id = UUID()
+    var hour = 5
+    var minute = 30
+    var days: Set<WakeDay> = []
+    var enabled = true
+    var systemID: UUID?
+
+    var timeLabel: String { String(format: "%02d:%02d", hour, minute) }
+
+    var dateSelection: Date {
+        Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: .now) ?? .now
+    }
+
+    var repeatLabel: String {
+        if days.isEmpty { return "１回のみ" }
+        if days.count == 7 { return "毎日" }
+        if days == Set(WakeDay.allCases.prefix(5)) { return "平日" }
+        if days == [.saturday, .sunday] { return "土・日" }
+        return WakeDay.allCases.filter(days.contains).map(\.shortName).joined(separator: "・")
+    }
+
+    var schedule: Alarm.Schedule {
+        let time = Alarm.Schedule.Relative.Time(hour: hour, minute: minute)
+        let weekdays = WakeDay.allCases.filter(days.contains).map(\.systemDay)
+        return .relative(.init(time: time, repeats: weekdays.isEmpty ? .never : .weekly(weekdays)))
+    }
+}
+
 struct OpenMorningIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "今日の一片を開く"
     static let supportedModes: IntentModes = .foreground(.immediate)
@@ -68,8 +109,8 @@ final class MorningModel {
     var committed = ""
     var inputSession = 0
     var customText = ""
-    var alarmTime: Date
     var message: String?
+    var alarmMessage: String?
     var busy = false
     var soundEnabled: Bool {
         didSet { defaults.set(soundEnabled, forKey: "soundEnabled") }
@@ -77,14 +118,15 @@ final class MorningModel {
     private(set) var date = Date()
     private(set) var passage: Passage
     private(set) var postcards: [Postcard]
-    private(set) var scheduled: Date?
+    private(set) var wakeAlarms: [WakeAlarm]
+    private(set) var testScheduled = false
     private(set) var wakeSession = false
 
     private let library: SceneLibrary
     private let defaults = UserDefaults.standard
     private let manager = AlarmManager.shared
     private let sounds = Effects()
-    private var mainID: UUID?
+    private var testID: UUID?
     private var reminderID: UUID?
     private var pendingReminders: Set<UUID> = []
     private var idleTask: Task<Void, Never>?
@@ -99,12 +141,21 @@ final class MorningModel {
         date = now
         passage = library.passage(on: now, custom: nil)
         postcards = cards
-        alarmTime = Calendar.current.date(bySettingHour: 5, minute: 30, second: 0, of: now) ?? now
         soundEnabled = defaults.object(forKey: "soundEnabled") as? Bool ?? true
-        scheduled = defaults.object(forKey: "mainDate") as? Date
-        mainID = defaults.string(forKey: "mainID").flatMap(UUID.init(uuidString:))
+        if let data = defaults.data(forKey: "wakeAlarms"),
+           let saved = try? JSONDecoder().decode([WakeAlarm].self, from: data) {
+            wakeAlarms = saved
+        } else if let oldDate = defaults.object(forKey: "mainDate") as? Date,
+                  let oldID = defaults.string(forKey: "mainID").flatMap(UUID.init(uuidString:)) {
+            let clock = Calendar.current.dateComponents([.hour, .minute], from: oldDate)
+            wakeAlarms = [WakeAlarm(hour: clock.hour ?? 5, minute: clock.minute ?? 30, systemID: oldID)]
+        } else {
+            wakeAlarms = []
+        }
+        testID = defaults.string(forKey: "testAlarmID").flatMap(UUID.init(uuidString:))
+        testScheduled = testID != nil
         reminderID = defaults.string(forKey: "reminderID").flatMap(UUID.init(uuidString:))
-        if let scheduled { alarmTime = scheduled }
+        persistAlarms()
         restoreToday()
         if reminderID != nil && defaults.string(forKey: "pendingWakeDay") == Postcard.dayKey(now) {
             stage = .waking
@@ -126,9 +177,18 @@ final class MorningModel {
 
     private func receiveAlarmList(_ alarms: [Alarm]?) {
         guard let alarms else { return }
-        if let mainID, scheduled.map({ $0 <= Date() }) == true,
-           !alarms.contains(where: { $0.id == mainID }) {
-            setMain(nil, at: nil)
+        if !busy {
+            let ids = Set(alarms.map(\.id))
+            let missing = wakeAlarms.indices.filter { index in
+                let alarm = wakeAlarms[index]
+                return alarm.enabled && alarm.systemID.map { !ids.contains($0) } == true
+            }
+            for index in missing { wakeAlarms[index].enabled = false }
+            if !missing.isEmpty { persistAlarms() }
+            if let testID, !ids.contains(testID) {
+                testScheduled = false
+                if alarmMessage?.hasPrefix("20秒後") == true { alarmMessage = nil }
+            }
         }
         if let reminderID, !pendingReminders.contains(reminderID),
            !alarms.contains(where: { $0.id == reminderID }) {
@@ -176,7 +236,7 @@ final class MorningModel {
         guard !isComposing else { return }
         committed = text
         guard match.complete else { return }
-        let card = Postcard(day: Postcard.dayKey(date), date: date, text: passage.text, art: passage.image, description: passage.description)
+        let card = Postcard(day: Postcard.dayKey(date), date: date, text: passage.text, art: passage.image, description: passage.description, title: passage.title)
         if !postcards.contains(where: { $0.id == card.id }) {
             postcards.insert(card, at: 0)
             if let data = try? JSONEncoder().encode(postcards) { defaults.set(data, forKey: "postcards") }
@@ -200,62 +260,111 @@ final class MorningModel {
         resetIdleTimer()
     }
 
-    func scheduleMorning(test: Bool = false) async {
-        guard !busy else { return }
+    func saveAlarm(_ draft: WakeAlarm) async -> Bool {
+        guard !busy else { return false }
         busy = true
+        alarmMessage = nil
         defer { busy = false }
-        message = nil
+        let previous = wakeAlarms.first { $0.id == draft.id }
+        var next = draft
+        next.systemID = nil
         do {
-            let status = manager.authorizationState
-            if status == .notDetermined { _ = try await manager.requestAuthorization() }
-            guard manager.authorizationState == .authorized else {
-                message = "iPhoneの「設定」で、このアプリのアラームを許可してください。"
-                return
+            if next.enabled {
+                try await authorizeAlarms()
+                let id = UUID()
+                try await schedule(id, schedule: next.schedule, isInitial: true)
+                next.systemID = id
             }
-            var time = Calendar.current.dateComponents([.hour, .minute], from: alarmTime)
-            time.second = 0
-            let date: Date
-            if test {
-                date = Date().addingTimeInterval(20)
-            } else if let next = Calendar.current.nextDate(after: .now, matching: time, matchingPolicy: .nextTime) {
-                date = next
-            } else {
-                message = "時刻を選び直してください。"
-                return
-            }
-            let newID = UUID()
-            try await schedule(newID, date: date, isInitial: true)
-            if let mainID {
-                do { try remove(mainID) } catch {
-                    try? remove(newID)
+            if let oldID = previous?.systemID {
+                do { try cancelAlarm(oldID) }
+                catch {
+                    if let newID = next.systemID { try? cancelAlarm(newID) }
                     throw error
                 }
             }
-            setMain(newID, at: date)
-            message = test ? "20秒後に鳴ります。画面をロックして試せます。" : "アラームを設定しました。"
+            if let index = wakeAlarms.firstIndex(where: { $0.id == draft.id }) {
+                wakeAlarms[index] = next
+            } else {
+                wakeAlarms.append(next)
+            }
+            wakeAlarms.sort { ($0.hour, $0.minute) < ($1.hour, $1.minute) }
+            persistAlarms()
+            return true
+        } catch AlarmAccess.denied {
+            alarmMessage = "iPhoneの「設定」で、このアプリのアラームを許可してください。"
         } catch {
-            message = "アラームを設定できませんでした。もう一度お試しください。"
+            alarmMessage = "変更を保存できませんでした。もう一度お試しください。"
+        }
+        return false
+    }
+
+    func setAlarmEnabled(_ alarm: WakeAlarm, enabled: Bool) async {
+        var draft = alarm
+        draft.enabled = enabled
+        _ = await saveAlarm(draft)
+    }
+
+    func deleteAlarm(_ alarm: WakeAlarm) -> Bool {
+        guard !busy else { return false }
+        do {
+            if let id = alarm.systemID { try cancelAlarm(id) }
+            wakeAlarms.removeAll { $0.id == alarm.id }
+            persistAlarms()
+            alarmMessage = nil
+            return true
+        } catch {
+            alarmMessage = "アラームを削除できませんでした。もう一度お試しください。"
+            return false
         }
     }
 
-    func cancelMorning() {
-        guard let mainID else { return }
+    func scheduleTest() async {
+        guard !busy, !testScheduled else { return }
+        busy = true
+        defer { busy = false }
         do {
-            try remove(mainID)
-            setMain(nil, at: nil)
-            message = "アラームを解除しました。"
+            try await authorizeAlarms()
+            let id = UUID()
+            try await schedule(id, schedule: .fixed(.now.addingTimeInterval(20)), isInitial: true)
+            testID = id
+            testScheduled = true
+            defaults.set(id.uuidString, forKey: "testAlarmID")
+            alarmMessage = "20秒後に鳴ります。画面をロックして試せます。"
+        } catch AlarmAccess.denied {
+            alarmMessage = "iPhoneの「設定」で、このアプリのアラームを許可してください。"
         } catch {
-            message = "アラームを解除できませんでした。もう一度お試しください。"
+            alarmMessage = "テストを設定できませんでした。"
+        }
+    }
+
+    func cancelTest() {
+        guard !busy, let testID else { return }
+        do {
+            try cancelAlarm(testID)
+            testScheduled = false
+            alarmMessage = nil
+        } catch {
+            alarmMessage = "テストを取り消せませんでした。"
         }
     }
 
     func openFromAlarm(_ id: UUID) {
         let resume = (id == reminderID || wakeSession) && Postcard.dayKey(date) == Postcard.dayKey(.now)
         message = nil
-        if id == mainID { setMain(nil, at: nil) }
         if id == reminderID { setReminder(nil) }
-        // AlarmKit may have already stopped a one-shot alarm when its button was pressed.
-        do { try remove(id) } catch { message = "鳴り続ける場合は、iPhoneのアラーム画面で停止できます。" }
+        if id == testID { testScheduled = false }
+        if let index = wakeAlarms.firstIndex(where: { $0.systemID == id }), wakeAlarms[index].days.isEmpty {
+            wakeAlarms[index].enabled = false
+            persistAlarms()
+        }
+        // Stop only the current occurrence, so a weekly schedule stays registered.
+        do {
+            if try manager.alarms.contains(where: { $0.id == id && $0.state == .alerting }) {
+                try manager.stop(id: id)
+            }
+        } catch {
+            message = "鳴り続ける場合は、iPhoneのアラーム画面で停止できます。"
+        }
         if !resume { restoreToday() }
         page = .today
         stage = .waking
@@ -266,7 +375,7 @@ final class MorningModel {
 
     func silenceFromSystem(_ id: UUID, isInitial: Bool) async {
         if isInitial {
-            if let mainID, mainID != id { return }
+            guard testID == id || wakeAlarms.contains(where: { $0.systemID == id }) else { return }
             openFromAlarm(id)
             idleTask?.cancel()
             await scheduleReminder(after: 60)
@@ -274,6 +383,23 @@ final class MorningModel {
             finishWake()
             restoreToday()
         }
+    }
+
+    private enum AlarmAccess: Error { case denied }
+
+    private func authorizeAlarms() async throws {
+        if manager.authorizationState == .notDetermined { _ = try await manager.requestAuthorization() }
+        guard manager.authorizationState == .authorized else { throw AlarmAccess.denied }
+    }
+
+    private func persistAlarms() {
+        if let data = try? JSONEncoder().encode(wakeAlarms) {
+            defaults.set(data, forKey: "wakeAlarms")
+        }
+    }
+
+    private func cancelAlarm(_ id: UUID) throws {
+        if try manager.alarms.contains(where: { $0.id == id }) { try manager.cancel(id: id) }
     }
 
     func enteredBackground() {
@@ -310,7 +436,7 @@ final class MorningModel {
         pendingReminders.insert(id)
         defer { pendingReminders.remove(id) }
         do {
-            try await schedule(id, date: Date().addingTimeInterval(delay), isInitial: false)
+            try await schedule(id, schedule: .fixed(.now.addingTimeInterval(delay)), isInitial: false)
             if !wakeSession || reminderID != id { try? remove(id) }
         } catch {
             if reminderID == id { setReminder(nil) }
@@ -346,7 +472,7 @@ final class MorningModel {
         }
     }
 
-    private func schedule(_ id: UUID, date: Date, isInitial: Bool) async throws {
+    private func schedule(_ id: UUID, schedule: Alarm.Schedule, isInitial: Bool) async throws {
         let presentation = AlarmPresentation(alert: .init(
             title: "未来の一片",
             stopButton: AlarmButton(text: "停止", textColor: .white, systemImageName: "stop.fill"),
@@ -354,20 +480,13 @@ final class MorningModel {
             secondaryButtonBehavior: .custom
         ))
         let configuration = AlarmManager.AlarmConfiguration<MorningMetadata>.alarm(
-            schedule: .fixed(date),
+            schedule: schedule,
             attributes: AlarmAttributes(presentation: presentation, metadata: MorningMetadata(), tintColor: Color(red: 0.58, green: 0.27, blue: 0.15)),
             stopIntent: SilenceMorningIntent(alarmID: id, isInitial: isInitial),
             secondaryIntent: OpenMorningIntent(alarmID: id),
             sound: .named("Dawn.wav")
         )
         _ = try await manager.schedule(id: id, configuration: configuration)
-    }
-
-    private func setMain(_ id: UUID?, at date: Date?) {
-        mainID = id
-        scheduled = date
-        defaults.set(id?.uuidString, forKey: "mainID")
-        defaults.set(date, forKey: "mainDate")
     }
 
     private func setReminder(_ id: UUID?) {
