@@ -495,7 +495,11 @@ private struct SceneImage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var player: AVPlayer?
 
-    static func hasMotion(_ index: Int) -> Bool { index == 25 || index == 26 }
+    static func hasMotion(_ index: Int) -> Bool { motionResource(for: index) != nil }
+
+    private static func motionResource(for index: Int) -> URL? {
+        Bundle.main.url(forResource: "scene\(index)", withExtension: "mp4", subdirectory: "Motion")
+    }
 
     static func artwork(for index: Int) -> UIImage? {
         if index < 8 { return UIImage(named: "scene\(index).jpg") }
@@ -504,8 +508,7 @@ private struct SceneImage: View {
     }
 
     private var motionURL: URL? {
-        guard !reduceMotion, Self.hasMotion(index) else { return nil }
-        return Bundle.main.url(forResource: "scene\(index)", withExtension: "mp4", subdirectory: "Motion")
+        reduceMotion ? nil : Self.motionResource(for: index)
     }
 
     var body: some View {

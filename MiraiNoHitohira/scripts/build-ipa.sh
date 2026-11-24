@@ -22,7 +22,7 @@ xcodebuild \
 app="$build_folder/DerivedData/Build/Products/Release-iphoneos/MiraiNoHitohira.app"
 test -x "$app/MiraiNoHitohira"
 for file in Info.plist scenes.json scene0.jpg scene7.jpg Key.wav Saved.wav Flight.m4a Dawn.wav KleeOne-Regular.ttf KleeOne-SemiBold.ttf KleeOne-OFL.txt ja.lproj/InfoPlist.strings \
-    Ambience/Leaves.m4a Ambience/Sparrow.m4a Ambience/Warbler.m4a Ambience/Tit.m4a Ambience/Dove.m4a Ambience/Credits.txt Motion/scene25.mp4 Motion/scene26.mp4; do
+    Ambience/Leaves.m4a Ambience/Sparrow.m4a Ambience/Warbler.m4a Ambience/Tit.m4a Ambience/Dove.m4a Ambience/Credits.txt; do
   test -s "$app/$file"
 done
 
@@ -43,6 +43,10 @@ for index in images:
     image = app / "Memories" / f"scene{index}.jpg"
     if not image.is_file() or not image.stat().st_size:
         raise SystemExit(f"Missing bundled illustration: {image.name}")
+for index in range(25, 34):
+    motion = app / "Motion" / f"scene{index}.mp4"
+    if not motion.is_file() or not motion.stat().st_size:
+        raise SystemExit(f"Missing bundled animation: {motion.name}")
 PYTHON
 
 mkdir -p "$build_folder/Payload" "$project_root/dist"
